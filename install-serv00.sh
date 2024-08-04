@@ -228,7 +228,7 @@ gitRowUrl="https://github.com/yyfalbl/sing-box-installer/blob/main"
 
 sbox_pkg_url="https://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/sing-box-1.9.3.pkg" # https://pkgs.org/download/sing-box
 sbox_pkg_fileName="sing-box-1.9.3.pkg"
-sbox_bin_url="https://raw.githubusercontent.com/k0baya/sb-for-serv00/main/sing-box"
+sbox_bin_url="https://github.com/yyfalbl/sb-for-serv00/blob/main/sing-box"
 status_sbox=0 # 0.未下载；1.已安装未运行；2.运行
 SING_BOX_PID=""
 log_file="$WORK_DIR/data/sing-box.log"
