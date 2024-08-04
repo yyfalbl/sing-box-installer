@@ -224,7 +224,7 @@ echo '             |___/                 |___/  '
 # ------------vars-----------
 WORK_DIR="$PWD" # ~/sing-box
 
-gitRowUrl="https://raw.githubusercontent.com/RayWangQvQ/sing-box-installer/main"
+gitRowUrl="https://github.com/yyfalbl/sing-box-installer/blob/main"
 
 sbox_pkg_url="https://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/sing-box-1.9.3.pkg" # https://pkgs.org/download/sing-box
 sbox_pkg_fileName="sing-box-1.9.3.pkg"
