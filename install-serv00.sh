@@ -2,6 +2,7 @@
 set -e
 set -u
 set -o pipefail
+verbose=false  # or true if you want verbose output by default
 
 # ------------share--------------
 invocation='echo "" && say_verbose "Calling: ${yellow:-}${FUNCNAME[0]} ${green:-}$*${normal:-}"'
