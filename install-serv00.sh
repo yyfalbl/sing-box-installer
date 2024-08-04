@@ -2,7 +2,6 @@
 set -e
 set -u
 set -o pipefail
-verbose=false  # or true if you want verbose output by default
 
 # ------------share--------------
 invocation='echo "" && say_verbose "Calling: ${yellow:-}${FUNCNAME[0]} ${green:-}$*${normal:-}"'
@@ -74,132 +73,255 @@ get_http_header_curl() {
 # remote_path - $1
 get_http_header_wget() {
     eval $invocation
+
+    local remote_path="$1"
+    local wget_options="-q -S --spider --tries 5 "
+    # Store options that aren't supported on all wget implementations separately.
+    local wget_options_extra="--waitretry 2 --connect-timeout 15 "
+    local wget_result=''
+
+    wget $wget_options $wget_options_extra "$remote_path" 2>&1
+    wget_result=$?
+
+    if [[ $wget_result = 2 ]]; then
+        # Parsing of the command has failed. Exclude potentially unrecognized options and retry.
+        wget $wget_options "$remote_path" 2>&1
+        return $?
+    fi
+
+    return $wget_result
+}
+
+# Updates global variables $http_code and $download_error_msg
+downloadcurl() {
     eval $invocation
 
-    echo ""
-    echo "==============================================="
-    echo "Congratulations! 恭喜！"
-    echo "创建并运行sing-box服务成功。"
-    echo ""
-    echo "请使用客户端尝试连接你的节点进行测试"
-
-    local JSON=$(cat $WORK_DIR/data/config.json)
-    echo ""
-    echo ""
-    echo ""
-    echo "==============================================="
-    err "【vmess节点】如下："
-    port_vmess=$(jq -r '.inbounds[0].listen_port' <<< "$JSON")
-    proxy_uuid=$(jq -r '.inbounds[0].users[0].uuid' <<< "$JSON")
-    domain=$(cat $domain_file)
-    sub_vmess="vmess://$(echo "{\"add\":\"$domain\",\"aid\":\"0\",\"host\":\"download.windowsupdate.com\",\"id\":\"$proxy_uuid\",\"net\":\"ws\",\"path\":\"/download\",\"port\":\"$port_vmess\",\"ps\":\"serv00-vmess\",\"scy\":\"auto\",\"sni\":\"\",\"tls\":\"\",\"type\":\"\",\"v\":\"2\"}" | base64 -w0 )"
-    echo "订阅：$sub_vmess"
-    echo "服务器：$domain"
-    echo "端口：$port_vmess"
-    echo "UUID：$proxy_uuid"
-    echo "Alter Id：0"
-    echo "传输：ws"
-    echo "Path：/download"
-    echo "Host：download.windowsupdate.com"
-    echo ""
-    echo ""
-    echo ""
-    echo "==============================================="
-    err "【vless节点】如下："
-    port_vless=$(jq -r '.inbounds[1].listen_port' <<< "$JSON")
-    proxy_uuid=$(jq -r '.inbounds[1].users[0].uuid' <<< "$JSON")
-    domain=$(cat $domain_file)
-    sub_vless="vless://$proxy_uuid@$domain:$port_vless?security=none&type=ws&host=$domain&path=/vless#serv00-vless"
-    echo "订阅：$sub_vless"
-    echo "服务器：$domain"
-    echo "端口：$port_vless"
-    echo "UUID：$proxy_uuid"
-    echo "传输：ws"
-    echo "Path：/vless"
-    echo "Host：$domain"
-    echo "==============================================="
+    unset http_code
+    unset download_error_msg
+    local remote_path="$1"
+    local out_path="${2:-}"
+    local remote_path_with_credential="${remote_path}"
+    local curl_options="--retry 20 --retry-delay 2 --connect-timeout 15 -sSL -f --create-dirs "
+    local failed=false
+    if [ -z "$out_path" ]; then
+        curl $curl_options "$remote_path_with_credential" 2>&1 || failed=true
+    else
+        curl $curl_options -o "$out_path" "$remote_path_with_credential" 2>&1 || failed=true
+    fi
+    if [ "$failed" = true ]; then
+        local response=$(get_http_header_curl $remote_path)
+        http_code=$(echo "$response" | awk '/^HTTP/{print $2}' | tail -1)
+        download_error_msg="Unable to download $remote_path."
+        if [[ $http_code != 2* ]]; then
+            download_error_msg+=" Returned HTTP status code: $http_code."
+        fi
+        say_verbose "$download_error_msg"
+        return 1
+    fi
+    return 0
 }
 
-uninstall(){
+# Updates global variables $http_code and $download_error_msg
+downloadwget() {
     eval $invocation
 
-    rm -rf $WORK_DIR/*
-    say_warning "完成"
+    unset http_code
+    unset download_error_msg
+    local remote_path="$1"
+    local out_path="${2:-}"
+    local remote_path_with_credential="${remote_path}"
+    local wget_options="--tries 20 "
+    # Store options that aren't supported on all wget implementations separately.
+    local wget_options_extra="--waitretry 2 --connect-timeout 15 "
+    local wget_result=''
+
+    if [ -z "$out_path" ]; then
+        wget -q $wget_options $wget_options_extra -O - "$remote_path_with_credential" 2>&1
+        wget_result=$?
+    else
+        wget $wget_options $wget_options_extra -O "$out_path" "$remote_path_with_credential" 2>&1
+        wget_result=$?
+    fi
+
+    if [[ $wget_result = 2 ]]; then
+        # Parsing of the command has failed. Exclude potentially unrecognized options and retry.
+        if [ -z "$out_path" ]; then
+            wget -q $wget_options -O - "$remote_path_with_credential" 2>&1
+            wget_result=$?
+        else
+            wget $wget_options -O "$out_path" "$remote_path_with_credential" 2>&1
+            wget_result=$?
+        fi
+    fi
+
+    if [[ $wget_result != 0 ]]; then
+        local disable_feed_credential=false
+        local response=$(get_http_header_wget $remote_path $disable_feed_credential)
+        http_code=$(echo "$response" | awk '/^  HTTP/{print $2}' | tail -1)
+        download_error_msg="Unable to download $remote_path."
+        if [[ $http_code != 2* ]]; then
+            download_error_msg+=" Returned HTTP status code: $http_code."
+        fi
+        say_verbose "$download_error_msg"
+        return 1
+    fi
+
+    return 0
 }
 
-stop_sbox(){
+# args:
+# remote_path - $1
+# [out_path] - $2 - stdout if not provided
+download() {
     eval $invocation
 
-    kill -9 $SING_BOX_PID
-    say "已关闭"
+    local remote_path="$1"
+    local out_path="${2:-}"
+
+    if [[ "$remote_path" != "http"* ]]; then
+        cp "$remote_path" "$out_path"
+        return $?
+    fi
+
+    local failed=false
+    local attempts=0
+    while [ $attempts -lt 3 ]; do
+        attempts=$((attempts + 1))
+        failed=false
+        if machine_has "curl"; then
+            downloadcurl "$remote_path" "$out_path" || failed=true
+        elif machine_has "wget"; then
+            downloadwget "$remote_path" "$out_path" || failed=true
+        else
+            say_err "Missing dependency: neither curl nor wget was found."
+            exit 1
+        fi
+
+        if [ "$failed" = false ] || [ $attempts -ge 3 ] || { [ ! -z $http_code ] && [ $http_code = "404" ]; }; then
+            break
+        fi
+
+        say "Download attempt #$attempts has failed: $http_code $download_error_msg"
+        say "Attempt #$((attempts + 1)) will start in $((attempts * 10)) seconds."
+        sleep $((attempts * 10))
+    done
+
+    if [ "$failed" = true ]; then
+        say_verbose "Download failed: $remote_path"
+        return 1
+    fi
+    return 0
 }
+# ---------------------------------
 
-menu_setting() {
-  eval $invocation
-  
-  check_status
+echo '  ____               ____  _              '
+echo ' |  _ \ __ _ _   _  / ___|(_)_ __   __ _  '
+echo ' | |_) / _` | | | | \___ \| |  _ \ / _  | '
+echo ' |  _ < (_| | |_| |  ___) | | | | | (_| | '
+echo ' |_| \_\__,_|\__, | |____/|_|_| |_|\__, | '
+echo '             |___/                 |___/  '
 
-  if [[ -n "$SING_BOX_PID" ]]; then
-    OPTION[1]="1 .  查看sing-box运行状态"
-    OPTION[2]="2 .  查看订阅"
-    OPTION[3]="3 .  查看sing-box日志"
-    OPTION[4]="4 .  关闭sing-box"
-    OPTION[5]="5 .  卸载"
+# ------------vars-----------
+WORK_DIR="$PWD" # ~/sing-box
 
-    ACTION[1]() { check_status; exit 0; }
-    ACTION[2]() { get_sub; exit 0; }
-    ACTION[3]() { tail -f $log_file; exit 0; }
-    ACTION[4]() { stop_sbox; exit 0; }
-    ACTION[5]() { uninstall; exit; }
-  else
-    OPTION[1]="1.  安装sing-box"
-    OPTION[2]="2.  启动sing-box"
-    OPTION[3]="3.  卸载"
+gitRowUrl="https://raw.githubusercontent.com/RayWangQvQ/sing-box-installer/main"
 
-    ACTION[1]() { init; exit; }
-    ACTION[2]() { run_sbox; check_status; exit; }
-    ACTION[3]() { uninstall; exit; }
-  fi
+sbox_pkg_url="https://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/sing-box-1.9.3.pkg" # https://pkgs.org/download/sing-box
+sbox_pkg_fileName="sing-box-1.9.3.pkg"
+sbox_bin_url="https://raw.githubusercontent.com/k0baya/sb-for-serv00/main/sing-box"
+status_sbox=0 # 0.未下载；1.已安装未运行；2.运行
+SING_BOX_PID=""
+log_file="$WORK_DIR/data/sing-box.log"
 
-  [ "${#OPTION[@]}" -ge '10' ] && OPTION[0]="0 .  Exit" || OPTION[0]="0.  Exit"
-  ACTION[0]() { exit; }
-}
+proxy_uuid=""
+proxy_uuid_file="$WORK_DIR/data/uuid.txt"
+proxy_name="ray"
+proxy_pwd="ray1qaz@WSX"
 
-menu() {
-  eval $invocation
+domain=""
+domain_file="$WORK_DIR/data/domain.txt"
+domain_name="rayexample.com"
+proxy_node_path=""
 
-  say "==============================================="
-  for ((b=1;b<=${#OPTION[*]};b++)); 
-  do [ "$b" = "${#OPTION[*]}" ] && warning " ${OPTION[0]} " || warning " ${OPTION[b]} "; 
-  done
-  read -rp "Choose: " CHOOSE
+is_docker=false
 
-  # 输入必须是数字且少于等于最大可选项
-  if grep -qE "^[0-9]{1,2}$" <<< "$CHOOSE" && [ "$CHOOSE" -lt "${#OPTION[*]}" ]; then
-    ACTION[$CHOOSE]
-  else
-    warning " Please enter the correct number [0-$((${#OPTION[*]}-1))] " && sleep 1 && menu
-  fi
-}
+if [ -f "$WORK_DIR/data/proxy_node_path.txt" ]; then
+    proxy_node_path=$(cat "$WORK_DIR/data/proxy_node_path.txt")
+fi
 
-init(){
-    #install_sbox_binary
-    install_sbox_bin
+if [ -f "$WORK_DIR/data/domain.txt" ]; then
+    domain=$(cat "$WORK_DIR/data/domain.txt")
+fi
 
-    read_var_from_user
+if [ -f "$WORK_DIR/data/uuid.txt" ]; then
+    proxy_uuid=$(cat "$WORK_DIR/data/uuid.txt")
+fi
 
-    download_data_files
-    replace_configs
-
-    run_sbox
-
-    check_status
-    get_sub
-}
+# ------------main------------
 
 main() {
-    menu_setting
-    menu
+    echo "This script installs and manages Sing-box. Please make sure to run it as root or with sudo."
+
+    if [ -d "$WORK_DIR" ]; then
+        echo "Working directory: $WORK_DIR"
+    else
+        echo "Creating working directory: $WORK_DIR"
+        mkdir -p "$WORK_DIR"
+    fi
+
+    if [ -f "$log_file" ]; then
+        echo "Log file found at: $log_file"
+    else
+        echo "Creating log file at: $log_file"
+        touch "$log_file"
+    fi
+
+    if [ -z "$proxy_uuid" ]; then
+        echo "No UUID found. Generating a new one."
+        proxy_uuid=$(uuidgen)
+        echo "$proxy_uuid" > "$proxy_uuid_file"
+    fi
+
+    if [ -z "$domain" ]; then
+        echo "No domain found. Setting default domain."
+        domain="$domain_name"
+        echo "$domain" > "$domain_file"
+    fi
+
+    echo "Proxy UUID: $proxy_uuid"
+    echo "Domain: $domain"
+
+    if [ "$status_sbox" -eq 0 ]; then
+        echo "Sing-box is not installed. Downloading and installing..."
+        download "$sbox_pkg_url" "$WORK_DIR/$sbox_pkg_fileName"
+        if [ $? -eq 0 ]; then
+            echo "Installation package downloaded successfully."
+            echo "Installing Sing-box..."
+            # Example installation command; adapt as needed
+            pkg add "$WORK_DIR/$sbox_pkg_fileName" >> "$log_file" 2>&1
+            status_sbox=1
+        else
+            echo "Failed to download Sing-box package."
+        fi
+    fi
+
+    if [ "$status_sbox" -eq 1 ]; then
+        echo "Sing-box is installed but not running."
+        echo "Starting Sing-box..."
+        # Example start command; adapt as needed
+        sing-box start >> "$log_file" 2>&1
+        status_sbox=2
+    fi
+
+    if [ "$status_sbox" -eq 2 ]; then
+        echo "Sing-box is running."
+        echo "Checking status..."
+        # Example status check command; adapt as needed
+        sing-box status >> "$log_file" 2>&1
+    fi
+
+    echo "Script completed."
 }
 
 main
+
