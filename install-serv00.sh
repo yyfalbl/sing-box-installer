@@ -323,5 +323,33 @@ main() {
     echo "Script completed."
 }
 
+main() {
+    echo "This script installs and manages Sing-box. Please make sure to run it as root or with sudo."
+
+    # Ensure the working directory exists
+    if [ ! -d "$WORK_DIR" ]; then
+        echo "Creating working directory: $WORK_DIR"
+        mkdir -p "$WORK_DIR"
+    else
+        echo "Working directory: $WORK_DIR"
+    fi
+
+    # Ensure the 'data' directory exists within the working directory
+    if [ ! -d "$WORK_DIR/data" ]; then
+        echo "Creating data directory: $WORK_DIR/data"
+        mkdir -p "$WORK_DIR/data"
+    fi
+
+    # Create the log file if it does not exist
+    if [ -f "$log_file" ]; then
+        echo "Log file found at: $log_file"
+    else
+        echo "Creating log file at: $log_file"
+        touch "$log_file"
+    fi
+
+    # Rest of your script...
+}
+
 main
 
