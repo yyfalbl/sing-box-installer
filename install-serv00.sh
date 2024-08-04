@@ -23,7 +23,30 @@ if [ -t 1 ] && command -v tput >/dev/null; then
 fi
 
 print_prefix="ray_sbox_install"
+# Define variables
+WORK_DIR="/home/yy-falbl"
+LOG_DIR="$WORK_DIR/data"
+LOG_FILE="$LOG_DIR/sing-box.log"
 
+# Ensure the working directory exists
+if [ ! -d "$WORK_DIR" ]; then
+    echo "Creating working directory: $WORK_DIR"
+    mkdir -p "$WORK_DIR"
+fi
+
+# Ensure the log directory exists
+if [ ! -d "$LOG_DIR" ]; then
+    echo "Creating log directory: $LOG_DIR"
+    mkdir -p "$LOG_DIR"
+fi
+
+# Create the log file
+if [ ! -f "$LOG_FILE" ]; then
+    echo "Creating log file at: $LOG_FILE"
+    touch "$LOG_FILE"
+else
+    echo "Log file already exists at: $LOG_FILE"
+fi
 warning() {
     printf "%b\n" "${yellow:-}$1${normal:-}" >&3
 }
